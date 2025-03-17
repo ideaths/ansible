@@ -1,0 +1,7 @@
+---
+keepalived_state: "MASTER"
+keepalived_interface: "ens192"
+virtual_router_id: 51
+keepalived_priority: 100
+keepalived_auth_pass: "iuhsdasd82ernf"
+virtual_ip: "192.168.1.50"

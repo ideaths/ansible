@@ -1,0 +1,7 @@
+---
+- name: Đảm bảo Keepalived được kích hoạt và chạy
+  systemd:
+    name: keepalived
+    enabled: yes
+    state: started
+  when: inventory_hostname == groups['keepalived_servers'][0]

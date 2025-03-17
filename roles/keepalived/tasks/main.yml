@@ -1,0 +1,9 @@
+---
+- name: Cài đặt Keepalived
+  import_tasks: install.yml
+
+- name: Cấu hình Keepalived
+  import_tasks: configure.yml
+
+- name: Kích hoạt và khởi động dịch vụ Keepalived
+  import_tasks: service.yml

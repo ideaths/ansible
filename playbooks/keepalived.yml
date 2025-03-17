@@ -1,0 +1,5 @@
+---
+- hosts: keepalived_servers
+  become: yes
+  roles:
+    - keepalived

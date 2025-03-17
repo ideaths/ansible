@@ -1,0 +1,12 @@
+---
+- name: Cài đặt gói Keepalived trên Ubuntu/Debian
+  apt:
+    name: keepalived
+    state: present
+  when: ansible_os_family == "Debian"
+
+- name: Cài đặt gói Keepalived trên CentOS/RHEL
+  yum:
+    name: keepalived
+    state: present
+  when: ansible_os_family == "RedHat"

@@ -1,0 +1,18 @@
+; [keepalived_servers]
+; node1 ansible_host=192.168.1.31 keepalived_state=MASTER ansible_user=root keepalived_priority=100
+; node2 ansible_host=192.168.1.32 keepalived_state=BACKUP ansible_user=root keepalived_priority=90
+; node3 ansible_host=192.168.1.33 keepalived_state=BACKUP ansible_user=root keepalived_priority=80
+
+[masters]
+master-01 ansible_host=192.168.1.31
+master-02 ansible_host=192.168.1.32
+master-03 ansible_host=192.168.1.33
+
+[workers]
+worker-01 ansible_host=192.168.1.34
+worker-02 ansible_host=192.168.1.35
+worker-03 ansible_host=192.168.1.36
+
+[k8s_cluster:children]
+masters
+workers
