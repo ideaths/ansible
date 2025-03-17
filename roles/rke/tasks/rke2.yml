@@ -1,0 +1,408 @@
+---
+- name: Configure kernel modules
+  copy:
+    dest: /etc/modules-load.d/k8s.conf
+    content: |
+      br_netfilter
+      overlay
+    mode: '0644'
+  notify: reload sysctl
+
+- name: Configure NetworkManager
+  copy:
+    dest: /etc/NetworkManager/conf.d/rke2.conf
+    content: |
+      [keyfile]
+      unmanaged-devices=interface-name:cali*;interface-name:flannel*
+    mode: '0644'
+  notify: reload networkmanager
+
+- name: Configure sysctl parameters
+  copy:
+    dest: /etc/sysctl.d/90-rke2.conf
+    content: |
+      net.ipv4.ip_forward=1
+      net.ipv4.conf.all.send_redirects=0
+      net.ipv4.conf.default.send_redirects=0
+      net.ipv4.conf.default.accept_source_route=0
+      net.ipv4.conf.all.accept_redirects=0
+      net.ipv4.conf.default.accept_redirects=0
+      net.ipv4.conf.all.log_martians=1
+      net.ipv4.conf.default.log_martians=1
+      net.ipv4.conf.all.rp_filter=1
+      net.ipv4.conf.default.rp_filter=1
+      net.ipv6.conf.all.accept_ra=0
+      net.ipv6.conf.default.accept_ra=0
+      net.ipv6.conf.all.accept_redirects=0
+      net.ipv6.conf.default.accept_redirects=0
+      kernel.keys.root_maxbytes=25000000
+      kernel.keys.root_maxkeys=1000000
+      kernel.panic=10
+      kernel.panic_on_oops=1
+      vm.overcommit_memory=1
+      vm.panic_on_oom=0
+      net.ipv4.ip_local_reserved_ports=30000-32767
+      net.bridge.bridge-nf-call-iptables=1
+      net.bridge.bridge-nf-call-arptables=1
+      net.bridge.bridge-nf-call-ip6tables=1
+    mode: '0644'
+  notify: reload sysctl
+
+- name: Apply system configurations
+  shell: |
+    modprobe br_netfilter
+    modprobe overlay
+    sysctl --system
+    systemctl reload NetworkManager 
+
+- name: Configure firewall
+  block:
+    - name: Debug my_interface
+      debug:
+        var: network_interface
+
+    - name: delete RKE2 zone
+      firewalld:
+        zone: rke2
+        state: absent
+        permanent: yes
+
+    - name: Reset RKE2 zone
+      firewalld:
+        zone: rke2
+        state: present
+        permanent: yes
+
+    - name: Set interface to RKE2 zone
+      command: firewall-cmd --permanent --zone=rke2 --change-interface={{ ansible_default_ipv4.interface }}
+
+    - name: Configure firewall ports
+      firewalld:
+        port: "{{ item }}"
+        permanent: yes
+        state: enabled
+        zone: rke2
+      loop:
+        - 22/tcp            # SSH
+        - 179/tcp           # BGP
+        - 9345/tcp         # RKE2 supervisor
+        - 6443/tcp         # Kubernetes API
+        - 10250/tcp        # Kubelet
+        - 2379-2381/tcp    # etcd
+        - 30000-32767/tcp  # NodePort range
+        - 8472/udp         # Cilium VXLAN
+        - 6081/udp         # Cilium Geneve
+        - 4240/tcp         # Cilium health
+        - 4244/tcp         # Cilium Hubble
+        - 4245/tcp         # Cilium relay
+        - 4222/tcp         # Cilium health check
+        - 9966/tcp         # Cilium metrics
+        - 4250-4251/tcp    # Cilium auth
+        - 6060-6062/tcp    # Debug ports
+        - 9878-9879/tcp    # Envoy health
+        - 9890-9893/tcp    # Gops servers
+        - 9901/tcp         # Envoy admin
+        - 9962-9964/tcp    # Prometheus metrics
+        - 51871/udp        # WireGuard
+        - 4567/tcp         # Galera
+        - 4567/udp         # Galera
+        - 4568/tcp         # Galera
+        - 4444/tcp         # Galera
+        - 7443/tcp         # HAProxy K8s API
+        - 7345/tcp         # HAProxy RKE2 supervisor
+        - 8080/tcp         # HAProxy HTTP
+        - 8443/tcp         # HAProxy HTTPS
+        - 3306/tcp         # MariaDB backend
+        - 3307/tcp         # HAProxy MariaDB
+        - 80/tcp           # HAProxy backend
+        - 443/tcp          # HTTPS backend
+
+    - name: Reload firewall
+      command: firewall-cmd --reload 
+    - name: restart firewalld
+      command: systemctl restart firewalld 
+
+- name: Download RKE2 installation script
+  ansible.builtin.get_url:
+    url: "{{ rke2_install_bash_url }}"
+    dest: "{{ rke2_install_script_dir }}/rke2.sh"
+    mode: 0700
+  when: not rke2_airgap_mode
+
+- name: Copy local RKE2 installation script
+  ansible.builtin.copy:
+    src: "{{ rke2_airgap_copy_sourcepath }}/rke2.sh"
+    dest: "{{ rke2_install_script_dir }}/rke2.sh"
+    mode: 0700
+    force: yes
+  when:
+    - rke2_airgap_mode
+    - rke2_airgap_implementation == 'copy'
+
+- name: Create RKE2 artifacts folder
+  ansible.builtin.file:
+    path: "{{ rke2_artifact_path }}"
+    state: directory
+    mode: 0700
+  when:
+    - rke2_airgap_mode
+    - rke2_airgap_implementation != 'exists'
+
+- name: Download RKE2 checksum and artifacts (try to download remotely first - fallback to local download and push)
+  when:
+    - rke2_airgap_mode
+    - rke2_airgap_implementation == 'download'
+  block:
+    - name: Download sha256 checksum file ( airgap mode )
+      ansible.builtin.get_url:
+        url: "{{ rke2_artifact_url }}/{{ rke2_version }}/sha256sum-{{ rke2_architecture }}.txt"
+        dest: "{{ rke2_artifact_path }}/sha256sum-{{ rke2_architecture }}.txt"
+        force: yes
+        mode: 0640
+        timeout: 30
+    - name: Download RKE2 artifacts and compare with checksums ( airgap mode )
+      ansible.builtin.get_url:
+        url: "{{ rke2_artifact_url }}/{{ rke2_version }}/{{ item }}"
+        dest: "{{ rke2_artifact_path }}/{{ item }}"
+        mode: 0640
+        checksum: "sha256:{{ rke2_artifact_url }}/{{ rke2_version }}/sha256sum-{{ rke2_architecture }}.txt"
+        timeout: 30
+      with_items: "{{ rke2_artifact | reject('search', 'sha256sum') | list }}"
+    - name: Download RKE2 install script ( airgap mode )
+      ansible.builtin.get_url:
+        url: "{{ rke2_install_bash_url }}"
+        dest: "{{ rke2_install_script_dir }}/rke2.sh"
+        mode: 0700
+        timeout: 30
+  rescue:
+    - name: "Remote downloading failed: Downloading locally and pushing to remote hosts ( airgap mode - download locally and push to remote )"
+      ansible.builtin.pause: # Slight delay to make sure you know it's gonna happen and have time to cancel
+        seconds: 7
+    - name: "Create directory {{ rke2_airgap_copy_sourcepath }}"
+      delegate_to: localhost
+      run_once: true
+      ansible.builtin.file:
+        path: "{{ rke2_airgap_copy_sourcepath }}"
+        state: directory
+        mode: 0750
+        owner: "{{ lookup('env', 'USER') }}"
+    - name: Download RKE2 checksum locally
+      delegate_to: localhost
+      run_once: true
+      register: checksum_file
+      ansible.builtin.get_url:
+        url: "{{ rke2_artifact_url }}/{{ rke2_version }}/sha256sum-{{ rke2_architecture }}.txt"
+        dest: "{{ rke2_airgap_copy_sourcepath }}/"
+        force: yes
+        mode: 0640
+        owner: "{{ lookup('env', 'USER') }}"
+        timeout: 30
+    - name: Downloading RKE2 artifacts locally
+      delegate_to: localhost
+      run_once: true
+      ansible.builtin.get_url:
+        force: yes
+        url: "{{ item }}"
+        dest: "{{ rke2_airgap_copy_sourcepath }}/"
+        mode: 0640
+        owner: "{{ lookup('env', 'USER') }}"
+      with_items: "{{ [rke2_artifact_url + '/' + rke2_version + '/'] | product(rke2_artifact) | map('join') | list + [rke2_install_bash_url] }}"
+    - name: Download RKE2 install script locally
+      delegate_to: localhost
+      run_once: true
+      ansible.builtin.get_url:
+        url: "{{ rke2_install_bash_url }}"
+        dest: "{{ rke2_airgap_copy_sourcepath }}/rke2.sh"
+        mode: 0700
+        owner: "{{ lookup('env', 'USER') }}"
+    - name: Copy local RKE2 files to remote hosts
+      ansible.builtin.copy:
+        src: "{{ rke2_airgap_copy_sourcepath }}/"
+        dest: "{{ rke2_artifact_path }}/"
+        mode: 0640
+    - name: Copy local RKE2 install script to remote hosts
+      ansible.builtin.copy:
+        src: "{{ rke2_airgap_copy_sourcepath }}/rke2.sh"
+        dest: "{{ rke2_install_script_dir }}/rke2.sh"
+        mode: 0700
+
+- name: Copy local RKE2 artifacts
+  ansible.builtin.copy:
+    src: "{{ rke2_airgap_copy_sourcepath }}/{{ item }}"
+    dest: "{{ rke2_artifact_path }}/{{ item }}"
+    mode: 0640
+    force: yes
+  with_items: "{{ rke2_artifact }}"
+  when:
+    - rke2_airgap_mode
+    - rke2_airgap_implementation == 'copy'
+
+- name: Airgap mode - additional images tarballs
+  when:
+    - rke2_airgap_mode
+    - ( rke2_airgap_copy_additional_tarballs | length > 0 )
+    - rke2_airgap_implementation != 'exists'
+  block:
+    - name: Create additional images tarballs folder
+      ansible.builtin.file:
+        path: "{{ rke2_tarball_images_path }}"
+        state: directory
+        mode: 0700
+    - name: Copy additional tarball images RKE2 components
+      ansible.builtin.copy:
+        src: "{{ rke2_airgap_copy_sourcepath }}/{{ item }}"
+        dest: "{{ rke2_tarball_images_path }}/{{ item }}"
+        mode: 0644
+        force: yes
+      with_items: "{{ rke2_airgap_copy_additional_tarballs }}"
+
+- name: Airgap mode - ensure artifacts exist and have acceptable permissions # only modifies permissions if they are overprivileged
+  when:
+    - rke2_airgap_mode
+    - rke2_airgap_implementation == 'exists'
+  block:
+    - name: Register artifacts
+      ansible.builtin.stat:
+        path: "{{ rke2_artifact_path }}/{{ item }}"
+      with_items: "{{ rke2_artifact }}"
+      register: artifacts
+    - name: Register install script
+      ansible.builtin.stat:
+        path: "{{ rke2_install_script_dir }}/rke2.sh"
+      register: install_script
+    - name: Register artifact facts
+      ansible.builtin.set_fact:
+        artifacts_writeable: "{{ artifacts.values() | map(attribute='writeable') | list | bool }}"
+    - name: Make the artifacts read-only
+      ansible.builtin.file:
+        path: "{{ rke2_artifact_path }}/{{ item }}"
+        mode: 0640
+      with_items: "{{ rke2_artifact }}"
+      when: artifacts_writeable
+    - name: Make the install script executable.
+      ansible.builtin.file:
+        path: "{{ rke2_install_script_dir }}/rke2.sh"
+        mode: 0700
+      when:
+        - install_script.stat.writeable
+        - not install_script.stat.executable
+    - name: Install script must be executable
+      ansible.builtin.fail:
+        msg: "The install script at {{ rke2_install_script_dir }}/rke2.sh must be executable."
+      when: not install_script.stat.executable
+
+- name: Populate service facts
+  ansible.builtin.service_facts:
+
+- name: Get stats of the FS object
+  ansible.builtin.stat:
+    path: /usr/local
+  register: usr_local
+
+- name: Check if separate partition
+  ansible.builtin.command: grep '/usr/local ' /proc/mounts
+  changed_when: false
+  register: partition_result
+  failed_when: partition_result.rc >= 2
+  check_mode: false
+
+- name: Set RKE2 bin path
+  ansible.builtin.set_fact:
+    rke2_bin_path: "{{ '/usr/local/bin/rke2' if (not usr_local.stat.writeable) or (partition_result.rc == 1) else '/opt/rke2/bin/rke2' }}"
+
+- name: Check RKE2 version
+  ansible.builtin.shell: |
+    set -euo pipefail
+
+    rke2_bin_path="{{ rke2_bin_path }}"
+    rke2_service_name="{{ rke2_service_name }}"
+    rke2_version="{{ rke2_version }}"
+
+    if [ -f "$rke2_bin_path" ]; then
+      installed_version="$($rke2_bin_path --version | grep -E "rke2 version" | awk '{print $3}')"
+    else
+      installed_version="not installed"
+    fi
+
+    if systemctl is-active --quiet $rke2_service_name && rke2_service_pid=$(systemctl show $rke2_service_name --property MainPID --value); then
+      rke2_bin_path="$(realpath "/proc/$rke2_service_pid/exe")"
+    fi
+
+    # Linux appends the target of removed proc exe with ' (deleted)', making the path unavailable.
+    if [ -f "$rke2_bin_path" ]; then
+      running_version="$($rke2_bin_path --version | grep -E "rke2 version" | awk '{print $3}')"
+    elif [ "$installed_version" = "not installed" ]; then
+      running_version="$rke2_version"
+    else
+      running_version="outdated"
+    fi
+
+    echo "{\"installed_version\":\"$installed_version\",\"running_version\":\"$running_version\"}"
+  args:
+    executable: /bin/bash
+  changed_when: false
+  register: versions_check
+
+- name: Set RKE2 versions
+  when: not ansible_check_mode
+  ansible.builtin.set_fact:
+    installed_version: "{{ versions.installed_version }}"
+    running_version: "{{ versions.running_version }}"
+  vars:
+    versions: "{{ versions_check.stdout | from_json }}"
+
+- name: Run RKE2 install script
+  when: not ansible_check_mode and rke2_version != installed_version
+  block:
+    - name: Run RKE2 install script with airgap variables
+      ansible.builtin.command:
+        cmd: "{{ rke2_install_script_dir }}/rke2.sh"
+      environment:
+        INSTALL_RKE2_ARTIFACT_PATH: "{{ rke2_artifact_path }}"
+        INSTALL_RKE2_AGENT_IMAGES_DIR: "{{ rke2_data_path }}/agent/images"
+        INSTALL_RKE2_METHOD: "{{ rke2_method }}"
+      changed_when: false
+      when: rke2_airgap_mode
+    - name: Run RKE2 install script without airgap variables
+      ansible.builtin.command:
+        cmd: "{{ rke2_install_script_dir }}/rke2.sh"
+      environment:
+        INSTALL_RKE2_VERSION: "{{ rke2_version }}"
+        INSTALL_RKE2_CHANNEL_URL: "{{ rke2_channel_url }}"
+        INSTALL_RKE2_CHANNEL: "{{ rke2_channel }}"
+        INSTALL_RKE2_METHOD: "{{ rke2_method }}"
+      changed_when: false
+      when: not rke2_airgap_mode
+
+- name: Copy Custom Manifests
+  ansible.builtin.template:
+    src: "{{ item }}"
+    dest: "{{ rke2_data_path }}/server/manifests/"
+    owner: root
+    group: root
+    mode: 0644
+  with_items: "{{ rke2_custom_manifests }}"
+  when: rke2_custom_manifests
+
+- name: Copy Static Pods
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "{{ rke2_data_path }}/agent/pod-manifests/"
+    owner: root
+    group: root
+    mode: 0644
+  with_items: "{{ rke2_static_pods }}"
+  when: rke2_static_pods
+
+- name: Copy RKE2 environment file
+  ansible.builtin.template:
+    src: rke2_environment.j2
+    dest: "/etc/default/rke2-{{ rke2_type }}"
+    owner: root
+    group: root
+    mode: 0644
+  when:
+    - rke2_environment_options is defined
+    - rke2_environment_options|length > 0
+
+

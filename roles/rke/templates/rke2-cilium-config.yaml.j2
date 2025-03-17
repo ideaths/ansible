@@ -1,0 +1,70 @@
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: rke2-cilium
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    kubeProxyReplacement: true
+    cni:
+      chainingMode: "none"
+    localRedirectPolicy: true
+    autoDirectNodeRoutes: false
+    bpf:
+      masquerade: true
+    k8sServiceHost: "{{ rke2_api_ip }}"
+    k8sServicePort: "{{ rke2_apiserver_dest_port }}"
+    externalIPs:
+      enabled: true
+    nodePort:
+      enabled: true
+    k8s:
+      requireIPv4PodCIDR: true
+    k8sClientRateLimit:
+      qps: 100
+      burst: 500
+    endpointRoutes:
+      enabled: false
+    ipam:
+      mode: kubernetes
+      operator:
+        clusterPoolIPv4MaskSize: 24
+        clusterPoolIPv4PodCIDRList:
+          - "{{ rke2_cluster_cidr }}"
+    loadBalancer:
+      mode: "dsr"
+      dsrDispatch: "geneve"
+      algorithm: "maglev"
+    l2announcements:
+      enabled: true
+    routingMode: "tunnel"
+    hubble:
+      enabled: true
+      relay:
+        enabled: true
+        prometheus:
+          enabled: true
+      ui:
+        enabled: true
+      metrics:
+        enableOpenMetrics: true
+        enabled:
+          - dns:query;ignoreAAAA
+          - drop:sourceContext=pod;destinationContext=pod
+          - tcp
+          - flow
+          - port-distribution
+          - httpV2:exemplars=true
+    tunnelProtocol: "geneve"
+    tunnelPort: 6081
+    maglev:
+      tableSize: 16381
+      hashSeed: "owoUgt+COeWQcVCD"
+    operator:
+      pprof:
+        enabled: false
+      prometheus:
+        enabled: true
+    prometheus:
+      enabled: true
+    healthPort: 7879
