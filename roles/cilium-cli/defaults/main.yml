@@ -1,0 +1,5 @@
+---
+cilium_version: v0.18.2
+cilium_arch: amd64
+cilium_bin_path: /usr/local/bin/cilium
+cilium_repo_path: https://github.com/cilium/cilium-cli/releases/download

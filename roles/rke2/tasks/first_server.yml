@@ -210,8 +210,6 @@
   delegate_facts: true
   loop: "{{ groups[rke2_cluster_group_name] }}"
 
-
-
 - name: Configure env kubectl
   shell: |
     echo "export KUBECONFIG=~/.kube/config" > /etc/profile.d/kubectl.sh
@@ -228,7 +226,7 @@
     cp /var/lib/rancher/rke2/agent/etc/crictl.yaml ~/.kube/crictl.yaml
     sed -i 's/127.0.0.1/{{ ansible_default_ipv4.address }}/g' /etc/rancher/rke2/rke2.yaml
     chown -R ${UID}:${GID} ~/.kube/
-    chmod 700 /home/ops/.kube
+    chmod 700 ~/.kube
     chmod 400 ~/.kube/config
     chmod 644 ~/.kube/crictl.yaml
     chmod 666 /run/k3s/containerd/containerd.sock

@@ -1,6 +1,8 @@
 - name: Deploy RKE2
-  hosts: all
+  hosts: k8s_cluster
   become: yes
+  vars_files:
+    - ../host_vars/main.yml
   vars:
     rke2_airgap_mode: true
     rke2_airgap_implementation: 'download'

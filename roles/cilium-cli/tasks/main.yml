@@ -1,0 +1,39 @@
+---
+ name: Check if cilium binary exists.
+  stat:
+    path: "{{ cilium_bin_path }}"
+  register: cilium_check
+
+- name: Check cilium version.
+  command: "{{ cilium_bin_path }} version"
+  failed_when: false
+  changed_when: false
+  register: cilium_existing_version
+
+- name: Download cilium.
+  unarchive:
+    src: "{{ cilium_repo_path }}/${{ cilium_version }}/cilium-linux-${{ cilium_arch }}.tar.gz{,.sha256sum}"
+    dest: /tmp
+    remote_src: true
+    mode: 0755
+  register: cilium_download
+  when: >
+    not cilium_check.stat.exists
+    or cilium_version not in cilium_existing_version.stdout
+
+- name: Copy cilium binary into place.
+  copy:
+    src: "/tmp/cilium-linux-{{ cilium_arch }}/cilium"
+    dest: "{{ cilium_bin_path }}"
+    mode: 0755
+    remote_src: true
+  become: true
+  when: cilium_download is changed
+
+# - name: install Cilium CLI.
+#   shell: |
+#     CILIUM_CLI_VERSION=$(curl -s https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt)
+#     curl -L --fail --remote-name-all https://github.com/cilium/cilium-cli/releases/download/${CILIUM_CLI_VERSION}/cilium-linux-${{ CLI_ARCH }}.tar.gz{,.sha256sum}
+#     sha256sum --check cilium-linux-${{ cilium_arch }}.tar.gz.sha256sum
+#     sudo tar xzvfC cilium-linux-${{ cilium_arch }}.tar.gz /usr/local/bin
+#     rm cilium-linux-${{ cilium_arch }}.tar.gz{,.sha256sum}

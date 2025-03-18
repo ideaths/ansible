@@ -1,0 +1,18 @@
+---
+- name: Verify
+  hosts: all
+  gather_facts: false
+
+  vars_files:
+    - ../../defaults/main.yml
+
+  tasks:
+    - name: Check cilium version.
+      command: "{{ cilium_bin_path }} version"
+      changed_when: false
+      register: cilium_verify_version
+
+    - name: Verify Helm's version is {{ cilium_version }}.
+      assert:
+        that:
+          - cilium_version in cilium_verify_version.stdout

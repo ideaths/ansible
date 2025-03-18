@@ -10,10 +10,14 @@ spec:
       chainingMode: "none"
     localRedirectPolicy: true
     autoDirectNodeRoutes: false
+    l7Proxy: true
+    encryption:
+      enabled: true
+      type: wireguard
     bpf:
       masquerade: true
     k8sServiceHost: "{{ rke2_api_ip }}"
-    k8sServicePort: "{{ rke2_apiserver_dest_port }}"
+    k8sServicePort: {{ rke2_apiserver_dest_port }}
     externalIPs:
       enabled: true
     nodePort:
@@ -30,7 +34,9 @@ spec:
       operator:
         clusterPoolIPv4MaskSize: 24
         clusterPoolIPv4PodCIDRList:
-          - "{{ rke2_cluster_cidr }}"
+{% for argument in rke2_cluster_cidr %}
+          - {{ argument }}
+{% endfor %} 
     loadBalancer:
       mode: "dsr"
       dsrDispatch: "geneve"
@@ -42,10 +48,13 @@ spec:
       enabled: true
       relay:
         enabled: true
+    #    peerService: true
         prometheus:
           enabled: true
       ui:
         enabled: true
+    #  tls:
+    #    enabled: false
       metrics:
         enableOpenMetrics: true
         enabled:
@@ -55,6 +64,8 @@ spec:
           - flow
           - port-distribution
           - httpV2:exemplars=true
+        dashboards:
+          enabled: true
     tunnelProtocol: "geneve"
     tunnelPort: 6081
     maglev:
@@ -65,6 +76,13 @@ spec:
         enabled: false
       prometheus:
         enabled: true
+      dashboards:
+        enabled: true
     prometheus:
       enabled: true
+    dashboards:
+      enabled: true
+
     healthPort: 7879
+    enableCNP: true
+    enableCCNP: true
