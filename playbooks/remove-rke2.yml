@@ -1,0 +1,137 @@
+---
+- name: Full cleanup RKE2 and Kubernetes environment
+  hosts: k8s_cluster
+  become: true
+  gather_facts: false
+
+  tasks:
+
+    - name: Stop all known RKE2 and Kubernetes services
+      shell: |
+        systemctl disable --now rke2-server 2>/dev/null || true
+        systemctl disable --now rke2-agent 2>/dev/null || true
+        systemctl disable --now kubelet 2>/dev/null || true
+        systemctl disable --now cilium 2>/dev/null || true
+        systemctl disable --now calico-node 2>/dev/null || true
+      ignore_errors: true
+
+    - name: Run official uninstall scripts if present
+      shell: |
+        [ -f /usr/local/bin/rke2-uninstall.sh ] && /usr/local/bin/rke2-uninstall.sh || true
+        [ -f /usr/local/bin/rke2-agent-uninstall.sh ] && /usr/local/bin/rke2-agent-uninstall.sh || true
+      ignore_errors: true
+
+    - name: Kill any leftover processes (containerd, kubelet, etc.)
+      shell: |
+        pkill -9 rke2 || true
+        pkill -9 containerd || true
+        pkill -9 kubelet || true
+        pkill -9 etcd || true
+      ignore_errors: true
+
+    - name: Remove RKE2 binaries and utilities
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /usr/local/bin/rke2
+        - /usr/local/bin/rke2-killall.sh
+        - /usr/local/bin/rke2-uninstall.sh
+        - /usr/local/bin/rke2-agent-uninstall.sh
+        - /usr/local/bin/containerd
+        - /usr/local/bin/ctr
+        - /usr/local/bin/crictl
+        - /usr/local/bin/runc
+        - /usr/local/bin/kubectl
+        - /usr/local/bin/etcdctl
+      ignore_errors: true
+
+    - name: Remove RKE2 and containerd systemd units
+      shell: |
+        rm -f /usr/local/lib/systemd/system/rke2-*.service
+        rm -f /etc/systemd/system/rke2-*.service
+        rm -f /etc/systemd/system/multi-user.target.wants/rke2-*.service
+        systemctl daemon-reload
+      ignore_errors: true
+
+    - name: Remove environment files and configuration
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/sysconfig/rke2-server
+        - /etc/sysconfig/rke2-agent
+        - /etc/default/rke2-server
+        - /etc/default/rke2-agent
+        - /etc/systemd/system/rke2-server.env
+        - /etc/systemd/system/rke2-agent.env
+      ignore_errors: true
+
+    - name: Remove data and configuration directories
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/rancher
+        - /etc/kubernetes
+        - /var/lib/rancher
+        - /var/lib/rke2
+        - /var/lib/kubelet
+        - /var/lib/cni
+        - /opt/cni
+        - /etc/cni
+        - /var/run/calico
+        - /var/lib/calico
+        - /etc/calico
+        - /var/lib/cilium
+        - /var/run/cilium
+      ignore_errors: true
+
+    - name: Remove leftover runtime sockets and temp dirs
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /run/k3s
+        - /run/rke2
+        - /run/containerd
+        - /run/flannel
+        - /run/calico
+      ignore_errors: true
+
+    - name: Clean up network interfaces created by CNIs
+      shell: |
+        for i in cni0 flannel.1 cali0 cilium_host cilium_net kube-ipvs0; do
+          ip link del $i 2>/dev/null || true
+        done
+      ignore_errors: true
+
+    - name: Flush iptables (Cilium, Calico, Flannel)
+      shell: |
+        iptables -F
+        iptables -t nat -F
+        iptables -t mangle -F
+        iptables -X
+      ignore_errors: true
+
+    - name: Clean up leftover ipsets
+      shell: |
+        ipset list | grep Name | awk '{print $2}' | xargs -r -n1 ipset destroy 2>/dev/null || true
+      ignore_errors: true
+
+    - name: Clean up any leftover kubelet logs
+      shell: |
+        find /var/log -type f -name '*kubelet*' -delete || true
+      ignore_errors: true
+
+    - name: Reload systemd configuration
+      command: systemctl daemon-reload
+      ignore_errors: true
+
+    - name: Reboot nodes to finalize cleanup
+      reboot:
+        msg: "Reboot after full RKE2 cleanup"
+        connect_timeout: 30
+        reboot_timeout: 600
+        pre_reboot_delay: 5
+        post_reboot_delay: 10

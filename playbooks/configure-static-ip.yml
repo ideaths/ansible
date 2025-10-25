@@ -1,0 +1,80 @@
+---
+# Playbook: Configure static IPv4 address using Netplan
+# Applies to Debian/Ubuntu systems that use netplan.
+
+- name: Configure static IPv4 via Netplan
+  hosts: all
+  become: true
+  vars:
+    netplan_output_path: "/etc/netplan/01-static.yaml"
+  tasks:
+    - name: Gather facts
+      ansible.builtin.setup:
+
+    - name: Ensure netplan is installed on Debian-based systems
+      ansible.builtin.package:
+        name: netplan.io
+        state: present
+      when: ansible_os_family == 'Debian'
+
+    - name: Detect default interface via ip route
+      ansible.builtin.shell: |
+        ip -4 route get 8.8.8.8 | sed -n 's/.*dev \([^ ]*\).*/\1/p'
+      args:
+        executable: /bin/bash
+      register: default_iface_route
+      changed_when: false
+      failed_when: false
+
+    - name: Set default values for netplan variables
+      ansible.builtin.set_fact:
+        netplan_interface: "{{ netplan_interface | default(ansible_default_ipv4.interface | default(default_iface_route.stdout | default('eth0') | trim)) }}"
+        netplan_address: "{{ netplan_address | default(ansible_host | default(ansible_default_ipv4.address)) }}"
+        netplan_prefix: "{{ netplan_prefix | default(24) }}"
+        netplan_gateway: "{{ netplan_gateway | default(ansible_default_ipv4.gateway | default(omit)) }}"
+        netplan_renderer: "{{ netplan_renderer | default('networkd') }}"
+
+    - name: Validate required variables
+      ansible.builtin.assert:
+        that:
+          - netplan_interface is defined
+          - netplan_address is defined
+          - netplan_prefix is defined
+        fail_msg: "Missing required vars: netplan_interface, netplan_address, netplan_prefix"
+
+    - name: Move existing netplan YAMLs to timestamped backup directory
+      ansible.builtin.shell: |
+        set -euo pipefail
+        shopt -s nullglob
+        ts=$(date +%Y%m%d-%H%M%S)
+        mkdir -p "/etc/netplan/backups/$ts"
+        for f in /etc/netplan/*.yaml; do
+          mv "$f" "/etc/netplan/backups/$ts/"
+        done
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Render static netplan config
+      ansible.builtin.template:
+        src: "../templates/netplan-static.yaml.j2"
+        dest: "{{ netplan_output_path }}"
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Apply netplan
+      ansible.builtin.command: netplan apply
+
+    - name: Verify network configuration
+      ansible.builtin.shell: |
+        set -euo pipefail
+        ip -4 addr show {{ netplan_interface }}; echo; ip route; echo; ping -c2 -W1 {{ netplan_gateway | default('8.8.8.8') }} || true
+      args:
+        executable: /bin/bash
+      register: net_verify
+      changed_when: false
+
+    - name: Show verification output
+      ansible.builtin.debug:
+        var: net_verify.stdout

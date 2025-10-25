@@ -1,0 +1,35 @@
+# Netplan static IPv4 configuration template
+# Variables expected:
+# - netplan_renderer: networkd | NetworkManager (default: networkd)
+# - netplan_interface: e.g. ens160
+# - netplan_address: e.g. 10.0.6.12
+# - netplan_prefix: e.g. 24
+# - netplan_gateway: e.g. 10.0.6.1 (optional)
+# - netplan_nameservers: list, e.g. ["8.8.8.8", "1.1.1.1"] (optional)
+# - netplan_search: list of search domains (optional)
+
+network:
+  version: 2
+  renderer: {{ netplan_renderer | default('networkd') }}
+  ethernets:
+    {{ netplan_interface }}:
+      dhcp4: false
+      dhcp6: false
+      addresses:
+        - "{{ netplan_address }}/{{ netplan_prefix }}"
+{% if netplan_gateway is defined and netplan_gateway %}
+      gateway4: {{ netplan_gateway }}
+{% endif %}
+{% if netplan_nameservers is defined and netplan_nameservers is iterable and netplan_nameservers is not string and netplan_nameservers|length > 0 %}
+      nameservers:
+        addresses:
+{% for ns in netplan_nameservers %}
+          - "{{ ns }}"
+{% endfor %}
+{% if netplan_search is defined and netplan_search is iterable and netplan_search is not string and netplan_search|length > 0 %}
+        search:
+{% for sd in netplan_search %}
+          - "{{ sd }}"
+{% endfor %}
+{% endif %}
+{% endif %}

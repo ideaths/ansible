@@ -1,0 +1,113 @@
+---
+# Setup internal NTP using Chrony
+# - Configure Chrony server on host 10.0.6.3
+# - Configure Chrony clients on k8s nodes to sync to 10.0.6.3
+
+# - name: Configure Chrony as NTP server on ntp_host
+#   hosts: ntp_host
+#   become: yes
+#   vars:
+#     ansible_connection: ssh
+#   tasks:
+#     - name: Install chrony via yum
+#       ansible.builtin.yum:
+#         name: chrony
+#         state: present
+
+#     - name: Backup chrony.conf
+#       ansible.builtin.copy:
+#         src: /etc/chrony.conf
+#         dest: "/etc/chrony.conf.bak.{{ ansible_date_time.epoch }}"
+#         remote_src: true
+#       ignore_errors: true
+
+#     - name: Configure chrony server
+#       ansible.builtin.copy:
+#         dest: /etc/chrony.conf
+#         content: |
+#           # Internal NTP server on {{ inventory_hostname }}
+#           local stratum 10
+#           bindaddress 10.0.6.3
+#           port 123
+#           allow 10.0.6.0/24
+#           rtcsync
+#           makestep 1.0 3
+#           driftfile /var/lib/chrony/drift
+#           logdir /var/log/chrony
+#         mode: '0644'
+
+#     - name: Open firewall for NTP (UDP 123)
+#       ansible.builtin.shell: |
+#         if systemctl is-active --quiet firewalld; then
+#           ZONES=$(firewall-cmd --get-active-zones | awk 'NR%2==1{print $1}');
+#           for z in $ZONES; do
+#             firewall-cmd --zone="$z" --add-service=ntp --permanent || true;
+#           done;
+#           firewall-cmd --reload || true;
+#         fi
+#       args:
+#         executable: /bin/bash
+
+#     - name: Enable and start chronyd
+#       ansible.builtin.systemd:
+#         name: chronyd
+#         state: restarted
+#         enabled: true
+
+#     - name: Verify chronyd listening on UDP 123
+#       ansible.builtin.shell: ss -u -lpn | grep ':123' || true
+#       args:
+#         executable: /bin/bash
+#       register: ntp_listen
+#       changed_when: false
+
+- name: Configure Chrony clients on Kubernetes nodes
+  hosts: k8s_cluster
+  become: yes
+  tasks:
+    # - name: Install chrony via yum
+    #   ansible.builtin.yum:
+    #     name: chrony
+    #     state: present
+
+    - name: Backup chrony.conf
+      ansible.builtin.copy:
+        src: /etc/chrony.conf
+        dest: "/etc/chrony.conf.bak.{{ ansible_date_time.epoch }}"
+        remote_src: true
+      ignore_errors: true
+
+    - name: Configure chrony client to 10.0.6.3
+      ansible.builtin.copy:
+        dest: /etc/chrony.conf
+        content: |
+          # Client config: sync to NTP server 10.0.6.3
+          server 10.0.6.3 iburst prefer
+          rtcsync
+          makestep 1.0 3
+          driftfile /var/lib/chrony/drift
+          logdir /var/log/chrony
+        mode: '0644'
+
+    - name: Enable and start chronyd
+      ansible.builtin.systemd:
+        name: chronyd
+        state: restarted
+        enabled: true
+
+    - name: Force initial sync (burst + makestep)
+      ansible.builtin.shell: |
+        chronyc -a burst 4/4 || true
+        sleep 2
+        chronyc -a makestep || true
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Verify sync status
+      ansible.builtin.shell: |
+        timedatectl; echo; chronyc tracking || true; echo; chronyc -n sources || true
+      args:
+        executable: /bin/bash
+      register: ntp_status
+      changed_when: false

@@ -1,0 +1,104 @@
+---
+- name: Bootstrap RedHat 8 nodes for RKE2 Airgap environment and Deploy RKE2
+  hosts: k8s_cluster
+  become: yes
+  gather_facts: true
+  vars:
+    # ansible_python_interpreter: /usr/bin/python3.12
+    # =============================
+    # Nexus configuration
+    # =============================
+    nexus_ip: "10.0.6.3"              # IP private của Nexus (airgap network)
+    nexus_http_port: 8081
+    nexus_docker_port: 8082
+    nexus_yum_group_repo: "http://{{ nexus_ip }}:{{ nexus_http_port }}/repository/rhel8-group/"
+    rke2_airgap_download_url: "http://{{ nexus_ip }}:{{ nexus_http_port }}/repository/rke2-proxy"
+    rke2_artifact_url: "http://{{ nexus_ip }}:{{ nexus_http_port }}/repository/rke2-proxy"
+    rke2_install_bash_url: "http://{{ nexus_ip }}:{{ nexus_http_port }}/repository/rke2-install-proxy/"
+    # =============================
+    # Local NTP (qua Nexus host)
+    # =============================
+    ntp_server: "{{ nexus_ip }}"
+
+    # =============================
+    # RKE2 cluster config
+    # =============================
+    rke2_airgap_mode: true
+    rke2_airgap_implementation: 'download'
+    # rke2_cni: cilium
+    # - 'multus'
+    # - 'calico'
+    rke2_ha_mode: true
+    rke2_api_ip: 10.0.6.11
+    rke2_api_domain: "rke2.local"
+    rke2_vip_interface: "ens34"  # interface trên node dùng IP ảo
+    rke2_interface: "ens34"
+    rke2_vip_enable: false
+    rke2_vip_mode: "kube-vip"
+    rke2_ha_mode_keepalived: false
+    rke2_ha_mode_kubevip: false
+    rke2_kubevip_cloud_provider_enable: false
+    rke2_kubevip_svc_enable: false
+    rke2_kubevip_ipvs_lb_enable: false
+    rke2_download_kubeconf: true
+    rke2_version: 'v1.34.1+rke2r1' #'v1.32.1+rke2r1'  #
+    rke2_disable_cloud_controller: true
+    rke2_cloud_provider_name: ''
+    rke2_cluster_domain: 'cluster.local'
+    rke2_agent_token: 'O+HkGqhGqCukrMS5'
+    rke2_token: 'O+HkGqhGqCukrMS5'
+    rke2_cis_profile: ""
+    rke2_type: "{{ 'server' if inventory_hostname in groups['masters'] else 'agent' }}"
+    rke2_disable:
+      # - 'rke2-canal'
+      - 'rke2-metrics-server'
+    disable_kube_proxy: false
+    rke2_kube_apiserver_args:
+      - '--default-not-ready-toleration-seconds=60'
+      - '--default-unreachable-toleration-seconds=40'
+    rke2_kube_controller_manager_arg:
+      - '--node-monitor-period=4s'
+      - '--allocate-node-cidrs=true'
+      - '--bind-address=0.0.0.0'
+      - '--terminated-pod-gc-threshold=50'
+    rke2_kubelet_arg:
+      - '--node-status-update-frequency=4s'
+      - '--max-pods=100'
+    rke2_server_node_taints:
+      - 'CriticalAddonsOnly=true:NoExecute'
+      - 'node-role.kubernetes.io/control-plane=true:NoSchedule'
+      - 'node-role.kubernetes.io/etcd=true:NoExecute'
+    rke2_artifact:
+      - 'sha256sum-{{ rke2_architecture }}.txt'
+      - 'rke2.linux-{{ rke2_architecture }}.tar.gz'
+      - 'rke2-images.linux-{{ rke2_architecture }}.tar.gz'
+      - 'rke2-images-cilium.linux-{{ rke2_architecture }}.tar.gz'
+      - 'rke2-images-calico.linux-{{ rke2_architecture }}.tar.gz'
+      - 'rke2-images-multus.linux-{{ rke2_architecture }}.tar.gz'
+    rke2_airgap_copy_sourcepath: ''
+    rke2_kube_scheduler_arg:
+      - '--bind-address=0.0.0.0'
+    rke2_custom_registry_mirrors:
+      - name: "docker.io"
+        endpoint:
+          - "http://{{ nexus_ip }}:{{ nexus_docker_port }}"
+      - name: "registry.k8s.io"
+        endpoint:
+          - "http://{{ nexus_ip }}:{{ nexus_docker_port }}"
+      - name: "registry.rancher.com"
+        endpoint:
+          - "http://{{ nexus_ip }}:{{ nexus_docker_port }}"
+      - name: "ghcr.io"
+        endpoint:
+          - "http://{{ nexus_ip }}:{{ nexus_docker_port }}"
+    rke2_custom_registry_configs:
+      - endpoint: "{{ nexus_ip }}:{{ nexus_docker_port }}"
+        config:
+          tls:
+            insecure_skip_verify: true
+      - endpoint: "{{ nexus_ip }}:{{ nexus_http_port }}"
+        config:
+          tls:
+            insecure_skip_verify: true
+  roles:
+    - rke2-1.49.0

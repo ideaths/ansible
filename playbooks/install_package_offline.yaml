@@ -1,0 +1,36 @@
+---
+- name: Cài đặt Python3 trên các node Kubernetes
+  hosts: k8s_cluster
+  become: yes
+  vars:
+    download_server: 10.0.6.10
+    download_user: root
+    python_packages:
+      - python3.12
+  tasks:
+    - name: Tải các gói Python3 từ máy chủ download
+      delegate_to: "{{ download_server }}"
+      run_once: yes
+      become_user: "{{ download_user }}"
+      shell: |
+        mkdir -p /tmp/python_packages
+        cd /tmp/python_packages
+        dnf download --resolve {{ python_packages | join(' ') }}
+
+
+    - name: Đồng bộ các gói đã tải về tới các node
+      synchronize:
+        src: /tmp/python_packages/
+        dest: /tmp/python_packages/
+        mode: pull
+        delegate_to: "{{ download_server }}"
+
+    - name: Cài đặt các gói Python3 từ thư mục tạm
+      command: |
+        cd /tmp/python_packages
+        rpm -ivh --replacepkgs --nodeps *.rpm
+
+    - name: Xóa thư mục tạm chứa các gói
+      file:
+        path: /tmp/python_packages
+        state: absent

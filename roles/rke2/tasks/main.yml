@@ -1,4 +1,7 @@
 ---
+- name: Set hostname based on inventory name
+  hostname:
+    name: "{{ inventory_hostname }}"
 - name: Install Keepalived when HA mode is enabled
   ansible.builtin.include_tasks: keepalived.yml
   when:
