@@ -1,0 +1,12 @@
+#!/bin/sh
+errorExit() {
+    echo "*** $*" 1>&2
+    exit 1
+}
+testUrl() {
+    curl --silent --max-time 2 --insecure "$1" --cert '{{rke2_data_path}}/server/tls/client-ca.crt' --key '{{rke2_data_path}}/server/tls/client-ca.key' -o /dev/null || errorExit "Error GET $1"
+}
+testUrl 'https://localhost:{{rke2_apiserver_dest_port}}/healthz'
+if ip addr | grep -wq '{{rke2_api_ip}}'; then
+    testUrl 'https://{{rke2_api_ip | ansible.utils.ipwrap}}:{{rke2_apiserver_dest_port}}/healthz'
+fi

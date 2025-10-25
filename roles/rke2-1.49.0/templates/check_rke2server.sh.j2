@@ -1,0 +1,18 @@
+#!/bin/sh
+errorExit() {
+    echo "*** $*" 1>&2
+    exit 1
+}
+testUrl() {
+    curl --silent --max-time 2 --insecure "$1" -o /dev/null || errorExit "Error GET $1"
+}
+testUrl https://localhost:9345/
+{% if rke2_api_private_ip is defined %}
+if ip addr | grep -wq '{{rke2_api_private_ip}}'; then
+    testUrl 'https://{{rke2_api_private_ip | ansible.utils.ipwrap}}:{{ rke2_api_private_port }}/'
+fi
+{% else %}
+if ip addr | grep -wq '{{rke2_api_ip}}'; then
+    testUrl 'https://{{rke2_api_ip | ansible.utils.ipwrap}}:9345/'
+fi
+{% endif %}
